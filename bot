@@ -1,0 +1,357 @@
+import discord
+from discord import app_commands, ui
+import os
+import asyncio
+from datetime import timedelta, datetime
+from collections import defaultdict
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+OWNER_ID = 1472282693235642632 
+AUTHORIZED_USERS = [1472282693235642632] 
+ALLOWED_PREMIUM_USER = "gly_1"
+PREMIUM_KEY = "Nyx_Guard_Online_premium"
+
+# Almacenamiento temporal
+premium_servers = set()
+server_keys = {}
+security_systems = {
+    "antibots": False,
+    "antiflood": False,
+    "antibotexternos": False,
+    "antiraid": False
+}
+
+PROTECTED_CHANNELS = ["anuncios-general", "ayuda-teamers", "ayuda-wars", "raid-terminada"]
+PROTECTED_ROLES = ["Staff", "🔑Key", "NyxGuard"]
+
+class RaidEliminarView(ui.View):
+    def __init__(self, interaction: discord.Interaction):
+        super().__init__(timeout=60)
+        self.interaction = interaction
+        self.selected_option = None
+
+    @ui.select(
+        placeholder="🛠 Elija una opción de limpieza",
+        options=[
+            discord.SelectOption(label="Eliminar canales", value="canales", description="Elimina canales creados durante el raid", emoji="🗑️"),
+            discord.SelectOption(label="Eliminar roles", value="roles", description="Elimina roles creados recientemente", emoji="🎭"),
+            discord.SelectOption(label="Eliminar bot de raid", value="bot", description="Expulsa/Banea al bot atacante", emoji="🤖"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: ui.Select):
+        if interaction.user.id != self.interaction.user.id:
+            return await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
+        self.selected_option = select.values[0]
+        await interaction.response.defer()
+
+    @ui.button(label="Confirmar", style=discord.ButtonStyle.green, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.interaction.user.id:
+            return await interaction.response.send_message("❌ No puedes usar este botón.", ephemeral=True)
+        
+        if not self.selected_option:
+            embed = discord.Embed(
+                title="<a:alertaanimado:1472301990792134848> Acción No Seleccionada",
+                description="No seleccionaste ninguna opción del menú.\n\n<a:flechaanimada:1472301988124430499> Debes elegir una opción antes de confirmar.\nEl proceso fue cancelado automáticamente.",
+                color=discord.Color.red()
+            )
+            return await interaction.response.edit_message(embed=embed, view=None)
+
+        if not interaction.guild.me.guild_permissions.administrator:
+            embed = discord.Embed(
+                title="<a:exanimado:1472301942683209788> Error de Permisos",
+                description="<a:alertaanimado:1472301990792134848> No tengo permisos suficientes para ejecutar esta acción.\n\n🔎 Posibles razones:\n• Mi rol está debajo del objetivo.\n• No tengo permisos de administrador.\n• No tengo permisos para gestionar canales o roles.\n\n⬆️ Sube mi rol más arriba y vuelve a intentarlo.",
+                color=discord.Color.red()
+            )
+            return await interaction.response.edit_message(embed=embed, view=None)
+
+        guild = interaction.guild
+        user = interaction.user
+
+        if self.selected_option == "canales":
+            deleted = 0
+            for channel in list(guild.channels):
+                if channel.name not in PROTECTED_CHANNELS:
+                    try:
+                        await channel.delete(reason="Eliminar Raid")
+                        deleted += 1
+                    except: pass
+            
+            embed = discord.Embed(
+                title="<a:marcadeverificacionanim:1472301965072662538> Eliminación Completada",
+                description=f"<a:fuegoanimado:1472301940389183488> Los canales sospechosos fueron eliminados correctamente.\n<a:llamaanimada:1472301937042002105> El servidor está nuevamente bajo control.\n\n📊 Resultado:\n• 🗑️ Canales eliminados: {deleted}\n• 👤 Acción ejecutada por: {user.mention}",
+                color=discord.Color.green()
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+            
+            try:
+                report_ch = await guild.create_text_channel("raid-terminada")
+                report_embed = discord.Embed(
+                    description="<a:Fuegomorado:1472301996164780052> Se detectó actividad sospechosa en el servidor.\n\n<a:flechaanimada:1472301988124430499> Sistema de protección activado\n<a:across9:1472301994365423861> Amenaza neutralizada\n<a:across9:1472301994365423861> Integridad del servidor asegurada\n\nNyxGuard respondió automáticamente y evitó daños.",
+                    color=discord.Color.purple()
+                )
+                await report_ch.send(embed=report_embed)
+            except: pass
+
+        elif self.selected_option == "roles":
+            deleted = 0
+            for role in list(guild.roles):
+                if role.name not in PROTECTED_ROLES and not role.managed and role < guild.me.top_role and role != guild.default_role:
+                    try:
+                        await role.delete(reason="Eliminar Raid")
+                        deleted += 1
+                    except: pass
+            
+            embed = discord.Embed(
+                title="<a:marcadeverificacionanim:1472301965072662538> Roles Eliminados",
+                description=f"<a:diamantebanimado:1472301950023504133> Roles sospechosos eliminados correctamente.\n<a:azulhypeinfanimado:1472301985318568117> Permisos peligrosos removidos.\n\n📊 Resultado:\n• 🎭 Roles eliminados: {deleted}\n• 👤 Ejecutado por: {user.mention}",
+                color=discord.Color.green()
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+
+        elif self.selected_option == "bot":
+            found = False
+            async for member in guild.fetch_members(limit=None):
+                if member.bot and member.id != interaction.client.user.id and member.guild_permissions.administrator:
+                    try:
+                        await member.ban(reason="Bot de Raid detectado")
+                        found = True
+                    except: pass
+            
+            if found:
+                embed = discord.Embed(
+                    title="<a:marcadeverificacionanim:1472301965072662538> Bot Malicioso Eliminado",
+                    description="<a:banhammer9animado:1472301982932013349> El bot de raid fue expulsado/baneado correctamente.\n<a:flechaanimada:1472301988124430499> Acceso bloqueado al sistema malicioso.\n\n🛡️ Seguridad restaurada.",
+                    color=discord.Color.green()
+                )
+            else:
+                embed = discord.Embed(description="No se detectó ningún bot malicioso con permisos administrativos.", color=discord.Color.red())
+            
+            await interaction.response.edit_message(embed=embed, view=None)
+
+    @ui.button(label="Cancelar", style=discord.ButtonStyle.red, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.interaction.user.id:
+            return await interaction.response.send_message("❌ No puedes usar este botón.", ephemeral=True)
+        
+        embed = discord.Embed(
+            title="<a:exanimado:1472301942683209788> Operación Cancelada",
+            description="La eliminación fue cancelada correctamente.\n\n<a:PruebaFLanimada:1472301938942017577> No se realizaron cambios en el servidor.",
+            color=discord.Color.red()
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+class MyClient(discord.Client):
+    def __init__(self):
+        # Desactivamos intents privilegiados para permitir que el bot encienda
+        # incluso si el usuario no los ha activado en el portal.
+        intents = discord.Intents.default()
+        intents.guilds = True
+        # NO activamos members ni message_content aquí para evitar el error de Shard ID None
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+
+client = MyClient()
+
+def is_admin(interaction: discord.Interaction):
+    return interaction.user.guild_permissions.administrator or interaction.user.id == OWNER_ID
+
+# --- EVENTOS ---
+@client.event
+async def on_message(message):
+    if message.author.bot: return
+    # Nota: Requiere Message Content Intent para detectar @everyone
+    if security_systems.get("antiflood") and "@everyone" in message.content:
+        if message.channel.name not in PROTECTED_CHANNELS:
+            try: await message.delete()
+            except: pass
+
+@client.event
+async def on_guild_channel_create(channel):
+    if security_systems.get("antiraid"):
+        if channel.name not in PROTECTED_CHANNELS:
+            try: await channel.delete(reason="Anti-Raid: Detección automática")
+            except: pass
+
+@client.event
+async def on_guild_role_create(role):
+    if security_systems.get("antiraid"):
+        if role.name not in PROTECTED_ROLES:
+            try: await role.delete(reason="Anti-Raid: Detección automática")
+            except: pass
+
+# --- COMANDOS ---
+@client.tree.command(name="help", description="📜 Muestra la lista de comandos disponibles")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="<a:azulhypeinfanimado:1472301985318568117> Panel de Ayuda NyxGuard",
+        description="Aquí tienes la lista completa de comandos organizados por categorías.",
+        color=discord.Color.purple()
+    )
+    
+    embed.add_field(
+        name="🛡️ Seguridad y Anti-Raid",
+        value=(
+            "`/eliminar-raid` - Menú de limpieza interactivo.\n"
+            "`/antiraid <on/off>` - Activa/Desactiva protección anti-raid.\n"
+            "`/antibots <on/off>` - Activa/Desactiva anti-bots.\n"
+            "`/antiflood <on/off>` - Activa/Desactiva anti-flood.\n"
+            "`/checkin` - Muestra el estado de seguridad actual."
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔨 Moderación",
+        value=(
+            "`/ban <usuario> <razón>` - Banea a un usuario.\n"
+            "`/kick <usuario> <razón>` - Expulsa a un usuario.\n"
+            "`/mute <usuario> <tiempo> <razón>` - Silencia temporalmente.\n"
+            "`/giverole <usuario> <rol>` - Asigna un rol."
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔑 Gestión de Llaves (Key)",
+        value=(
+            "`/keycreate <llave>` - Crea una llave para el servidor.\n"
+            "`/keyadd <usuario>` - Asigna la llave a un usuario.\n"
+            "`/keyremove <usuario>` - Remueve la llave.\n"
+            "`/keyrecordar` - Muestra la llave configurada."
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="NyxGuard Protect • Todos los derechos reservados")
+    await interaction.response.send_message(embed=embed)
+
+@client.tree.command(name="eliminar-raid", description="🛠️ Menú de limpieza profunda para el servidor")
+async def eliminar_raid(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🛠 Opciones disponibles",
+        description="Elige una opción en el menú y luego presiona Confirmar.",
+        color=discord.Color.blue()
+    )
+    view = RaidEliminarView(interaction)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+@client.tree.command(name="antiraid", description="🛡️ Configuración Anti-Raid")
+@app_commands.describe(estado="Encender (on) o Apagar (off)")
+async def antiraid(interaction: discord.Interaction, estado: str):
+    if not is_admin(interaction): return
+    security_systems["antiraid"] = (estado.lower() == "on")
+    await interaction.response.send_message(f"Sistema Anti-Raid: {'🟢 Activado' if security_systems['antiraid'] else '🔴 Desactivado'}", ephemeral=True)
+
+@client.tree.command(name="antibots", description="🤖 Configuración Anti-Bots")
+@app_commands.describe(estado="Encender (on) o Apagar (off)")
+async def antibots(interaction: discord.Interaction, estado: str):
+    if not is_admin(interaction): return
+    security_systems["antibots"] = (estado.lower() == "on")
+    await interaction.response.send_message(f"Sistema Anti-Bots: {'🟢 Activado' if security_systems['antibots'] else '🔴 Desactivado'}", ephemeral=True)
+
+@client.tree.command(name="antiflood", description="🌊 Configuración Anti-Flood")
+@app_commands.describe(estado="Encender (on) o Apagar (off)")
+async def antiflood(interaction: discord.Interaction, estado: str):
+    if not is_admin(interaction): return
+    security_systems["antiflood"] = (estado.lower() == "on")
+    await interaction.response.send_message(f"Sistema Anti-Flood: {'🟢 Activado' if security_systems['antiflood'] else '🔴 Desactivado'}", ephemeral=True)
+
+@client.tree.command(name="keyadd", description="🔑 Asigna una llave a un usuario")
+async def keyadd(interaction: discord.Interaction, usuario: discord.Member):
+    if not is_admin(interaction): return
+    role = discord.utils.get(interaction.guild.roles, name="🔑Key")
+    if not role:
+        try: role = await interaction.guild.create_role(name="🔑Key", color=discord.Color.from_rgb(0, 0, 0))
+        except: pass
+    try:
+        if role: await usuario.add_roles(role)
+        await interaction.response.send_message(f"✅ Llave asignada a {usuario.mention}")
+    except: await interaction.response.send_message("❌ Error al asignar rol.", ephemeral=True)
+
+@client.tree.command(name="keycreate", description="🔑 Crea una llave para el servidor")
+async def keycreate(interaction: discord.Interaction, key: str):
+    if not is_admin(interaction): return
+    server_keys[interaction.guild_id] = key
+    await interaction.response.send_message(f"✅ Key `{key}` creada.")
+
+@client.tree.command(name="keyremove", description="🔑 Remueve la llave de un usuario")
+async def keyremove(interaction: discord.Interaction, usuario: discord.Member):
+    if not is_admin(interaction): return
+    role = discord.utils.get(interaction.guild.roles, name="🔑Key")
+    if role:
+        try:
+            await usuario.remove_roles(role)
+            await interaction.response.send_message(f"✅ Llave removida de {usuario.mention}")
+        except: await interaction.response.send_message("❌ Error.", ephemeral=True)
+    else: await interaction.response.send_message("❌ El rol no existe.", ephemeral=True)
+
+@client.tree.command(name="keyrecordar", description="🔑 Muestra la llave del servidor")
+async def keyrecordar(interaction: discord.Interaction):
+    if not is_admin(interaction): return
+    key = server_keys.get(interaction.guild_id, "No hay una llave configurada.")
+    await interaction.response.send_message(f"🔑 La llave es: `{key}`", ephemeral=True)
+
+@client.tree.command(name="keypremium", description="💎 Activa Premium")
+async def keypremium(interaction: discord.Interaction, key: str):
+    if key == PREMIUM_KEY:
+        premium_servers.add(interaction.guild_id)
+        security_systems["antiraid"] = True
+        security_systems["antiflood"] = True
+        embed = discord.Embed(title="<a:marcadeverificacionanim:1472301965072662538> PREMIUM ACTIVADO", color=discord.Color.gold())
+        await interaction.response.send_message(embed=embed)
+    else: await interaction.response.send_message("❌ Key inválida.", ephemeral=True)
+
+@client.tree.command(name="ban", description="🔨 Banear un usuario")
+async def ban(interaction: discord.Interaction, user: discord.Member, razon: str = "No especificada"):
+    if not is_admin(interaction): return
+    try:
+        await user.ban(reason=razon)
+        embed = discord.Embed(title="<a:banhammer9animado:1472301982932013349> USUARIO BANEADO", description=f"**Usuario:** {user.mention}\n**Razón:** {razon}", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed)
+    except: await interaction.response.send_message("❌ Error.", ephemeral=True)
+
+@client.tree.command(name="kick", description="👢 Expulsar un usuario")
+async def kick(interaction: discord.Interaction, user: discord.Member, razon: str = "No especificada"):
+    if not is_admin(interaction): return
+    try:
+        await user.kick(reason=razon)
+        embed = discord.Embed(title="👢 USUARIO EXPULSADO", description=f"**Usuario:** {user.mention}\n**Razón:** {razon}", color=discord.Color.orange())
+        await interaction.response.send_message(embed=embed)
+    except: await interaction.response.send_message("❌ Error.", ephemeral=True)
+
+@client.tree.command(name="mute", description="🔇 Silenciar un usuario")
+async def mute(interaction: discord.Interaction, user: discord.Member, tiempo: int, razon: str = "No especificada"):
+    if not is_admin(interaction): return
+    try:
+        await user.timeout(timedelta(minutes=tiempo), reason=razon)
+        embed = discord.Embed(title="🔇 USUARIO SILENCIADO", description=f"**Usuario:** {user.mention}\n**Tiempo:** {tiempo} min\n**Razón:** {razon}", color=discord.Color.dark_grey())
+        await interaction.response.send_message(embed=embed)
+    except: await interaction.response.send_message("❌ Error.", ephemeral=True)
+
+@client.tree.command(name="giverole", description="🎭 Dar rol a un usuario")
+async def giverole(interaction: discord.Interaction, user: discord.Member, role: discord.Role):
+    if not is_admin(interaction): return
+    try:
+        await user.add_roles(role)
+        await interaction.response.send_message(f"✅ Rol {role.mention} dado a {user.mention}")
+    except: await interaction.response.send_message("❌ Error.", ephemeral=True)
+
+@client.tree.command(name="checkin", description="📊 Panel General de Seguridad")
+async def checkin(interaction: discord.Interaction):
+    embed = discord.Embed(title="<a:azulhypeinfanimado:1472301985318568117> Panel NyxGuard", color=discord.Color.dark_gray())
+    embed.add_field(name="Anti-Bots", value="🟢 Activado" if security_systems.get("antibots") else "🔴 Desactivado", inline=True)
+    embed.add_field(name="Anti-Flood", value="🟢 Activado" if security_systems.get("antiflood") else "🔴 Desactivado", inline=True)
+    embed.add_field(name="Anti-Raid", value="🟢 Activado" if security_systems.get("antiraid") else "🔴 Desactivado", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@client.event
+async def on_ready():
+    print(f'Logged in as {client.user}')
+
+if __name__ == "__main__":
+    if TOKEN: client.run(TOKEN)
+    else: print("ERROR: DISCORD_TOKEN no encontrado.")
